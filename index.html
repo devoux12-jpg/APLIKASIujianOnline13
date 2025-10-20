@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Aplikasi Ujian Sekolah Online</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <style>
         body {
@@ -215,6 +216,15 @@
     </div>
 
     <script>
+    // --- KONEKSI SUPABASE ---
+    // Ganti dengan URL dan Key dari proyek Supabase Anda
+    const SUPABASE_URL = 'https://ffypeamamezemhdbjlpg.supabase.co';
+    const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZmeXBlYW1hbWV6ZW1oZGJqbHBnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjAzODU2ODcsImV4cCI6MjA3NTk2MTY4N30.mHXP_7tjtDr-qaSgFfApIAa_ya4b43rNyO6qu0S_NjM';
+
+    const supabaseClient = (SUPABASE_URL !== 'SUPABASE_URL_ANDA' && SUPABASE_KEY !== 'SUPABASE_KEY_ANDA')
+        ? supabase.createClient(SUPABASE_URL, SUPABASE_KEY)
+        : null;
+
     // --- DATABASE SOAL ---
     const questions = [
         // Bahasa Indonesia (25 Soal)
@@ -326,19 +336,6 @@
         { subject: 'Geografi', question: 'Ibukota dari negara Malaysia adalah...', options: ['Singapura', 'Jakarta', 'Kuala Lumpur', 'Bandar Seri Begawan'], answer: 'Kuala Lumpur' },
     ];
 
-    // --- LEADERBOARD DATA (CONTOH) ---
-    const leaderboardData = [
-        { name: 'Siti Aisyah', score: 285 },
-        { name: 'Budi Santoso', score: 270 },
-        { name: 'Eka Wijaya', score: 255 },
-        { name: 'Putri Lestari', score: 240 },
-        { name: 'Rian Hidayat', score: 221 },
-        { name: 'Dewi Anggraini', score: 204 },
-        { name: 'Agus Setiawan', score: 189 },
-        { name: 'Indah Permata', score: 177 },
-    ];
-
-
     // --- APPLICATION LOGIC ---
     const startScreen = document.getElementById('start-screen');
     const quizScreen = document.getElementById('quiz-screen');
@@ -373,6 +370,7 @@
     let timerInterval;
     let timeLeft = 60 * 60; // 60 minutes in seconds
     let playerName = '';
+    let playerClass = '';
 
     startBtn.addEventListener('click', startQuiz);
     prevBtn.addEventListener('click', showPreviousQuestion);
@@ -382,6 +380,7 @@
 
     function startQuiz() {
         playerName = studentNameInput.value.trim();
+        playerClass = studentClassInput.value.trim();
         if (playerName === '') {
             nameError.classList.remove('hidden');
             studentNameInput.focus();
@@ -513,7 +512,7 @@
         window.requestAnimationFrame(step);
     }
 
-    function calculateResults() {
+    async function calculateResults() {
         let score = 0;
         let correct = 0;
         let wrong = 0;
@@ -536,26 +535,59 @@
         animateValue(wrongAnswersEl, 0, wrong, 1000);
         animateValue(unansweredEl, 0, unanswered, 1000);
         
-        updateAndDisplayLeaderboard(score);
+        await saveResultToSupabase(score);
+        await updateAndDisplayLeaderboard(score);
     }
 
-    function updateAndDisplayLeaderboard(playerScore) {
-        let currentLeaderboard = [...leaderboardData];
-        const currentPlayer = { name: playerName, score: playerScore, isCurrent: true };
-        currentLeaderboard.push(currentPlayer);
-        currentLeaderboard.sort((a, b) => b.score - a.score);
+    async function saveResultToSupabase(score) {
+        if (!supabaseClient) return; // Jangan lakukan apa-apa jika supabase tidak terkonfigurasi
+        try {
+            const { data, error } = await supabaseClient
+                .from('exam_results')
+                .insert([
+                    { student_name: playerName, student_class: playerClass, score: score },
+                ]);
 
-        leaderboardBody.innerHTML = '';
+            if (error) {
+                console.error('Error saving data to Supabase:', error);
+            }
+        } catch (err) {
+            console.error('An unexpected error occurred:', err);
+        }
+    }
 
-        currentLeaderboard.forEach((player, index) => {
-            const isCurrentUser = player.isCurrent;
+
+    async function updateAndDisplayLeaderboard(playerScore) {
+        if (!supabaseClient) {
+            leaderboardBody.innerHTML = `<tr><td colspan="3" class="text-center p-4 text-gray-500">Supabase belum terkonfigurasi.</td></tr>`;
+            return;
+        }
+
+        leaderboardBody.innerHTML = `<tr><td colspan="3" class="text-center p-4 text-gray-500">Memuat data...</td></tr>`;
+
+        const { data, error } = await supabaseClient
+            .from('exam_results')
+            .select('student_name, score')
+            .order('score', { ascending: false })
+            .limit(10); // Ambil 10 skor teratas
+
+        if (error) {
+            console.error('Error fetching leaderboard:', error);
+            leaderboardBody.innerHTML = `<tr><td colspan="3" class="text-center p-4 text-red-500">Gagal memuat data.</td></tr>`;
+            return;
+        }
+
+        leaderboardBody.innerHTML = ''; // Kosongkan tabel
+
+        data.forEach((player, index) => {
+            const isCurrentUser = player.student_name === playerName && player.score === playerScore;
             const rank = index + 1;
             const rowClass = isCurrentUser ? 'bg-indigo-100 font-bold text-indigo-800' : 'hover:bg-gray-50/50';
 
             const row = `
                 <tr class="${rowClass} transition-colors duration-200">
                     <td class="p-3 text-center rounded-l-lg">${rank}</td>
-                    <td class="p-3">${player.name}${isCurrentUser ? ' (Anda)' : ''}</td>
+                    <td class="p-3">${player.student_name}</td>
                     <td class="p-3 text-center font-semibold rounded-r-lg">${player.score}</td>
                 </tr>
             `;
@@ -576,3 +608,5 @@
 
 </body>
 </html>
+
+
